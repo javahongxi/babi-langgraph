@@ -73,40 +73,18 @@ babi --web --port 9000          # 指定端口
 
 打开浏览器访问 `http://localhost:8900`，即可在聊天界面中与 Babi Agent 交互。
 
-## 配置
+## Skills 扩展
 
-通过环境变量或 `.env` 文件配置（参见 [.env.example](.env.example)）：
+Skills 是 Markdown 格式的可复用工作流指令，从以下目录自动加载（后者覆盖前者）：
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `DASHSCOPE_API_KEY` | 阿里云百炼 API Key（**必需**） | — |
-| `TAVILY_API_KEY` | Tavily Search API Key（Web 搜索功能） | — |
-| `GITHUB_TOKEN` | GitHub 个人访问令牌 | — |
-| `BABI_MODEL_NAME` | 模型名称 | `qwen-plus` |
-| `BABI_FALLBACK_MODEL` | 降级模型 | `qwen-turbo` |
-| `BABI_WORKSPACE` | 工作目录 | `~/babi-workspace` |
-| `BABI_HOST` | Web 服务地址 | `127.0.0.1` |
-| `BABI_PORT` | Web 服务端口 | `8900` |
-| `BABI_PG_DSN` | PostgreSQL 连接串（会话持久化） | — |
+| 优先级 | 目录 | 说明 |
+|--------|------|------|
+| 低 | `~/.agents/skills/` | 全局共享 Skills |
+| 高 | `~/.babi/skills/` | Babi 专属 Skills |
 
-## 项目结构
-
-```
-babi-langgraph/
-├── babi/
-│   ├── agent/          # LangGraph Agent 构建与 Prompt 管理
-│   ├── middleware/      # 上下文截断等中间件
-│   ├── skills/         # Skill 加载器
-│   ├── tools/          # 内置工具（fetch_url, http_request, github_api, web_search 等）
-│   ├── utils/          # 工具函数
-│   ├── web/            # Web 服务（FastAPI）
-│   ├── cli.py          # CLI 入口（Click）
-│   └── config.py       # 配置管理（Pydantic Settings）
-├── resources/
-│   ├── static/         # Web 前端静态文件
-│   └── workspace/      # 默认工作区模板（AGENTS.md）
-└── tests/              # 测试
-```
+支持两种文件格式：
+- **单文件**：`my-skill.md`
+- **目录格式**：`my-skill/SKILL.md`
 
 ## 开发
 
