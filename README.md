@@ -33,7 +33,7 @@ export TAVILY_API_KEY=your_tavily_api_key
 # 可选 — GitHub API 令牌（用于 GitHub 相关功能）
 export GITHUB_TOKEN=your_github_token
 
-# 可选 — PostgreSQL 连接串（用于会话持久化，不配置则使用内存存储）
+# 可选 — PostgreSQL 连接串（用于 Web 模式会话持久化，不配置则使用内存存储）
 export BABI_PG_DSN=postgresql://user:password@localhost:5432/babi
 ```
 
