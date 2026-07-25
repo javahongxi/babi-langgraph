@@ -1,7 +1,7 @@
 """Agent builder: assembles the BabiAgent with LangGraph.
 
 Uses ChatOpenAI with DashScope compatible API for Qwen models,
-and LangGraph's create_react_agent for the ReAct loop.
+and LangChain's create_agent for the ReAct loop.
 """
 
 from __future__ import annotations
@@ -117,8 +117,8 @@ def build_agent(settings: Settings, workspace_path: Path | None = None):
     Returns:
         Compiled LangGraph agent (CompiledGraph) ready for use
     """
+    from langchain.agents import create_agent
     from langgraph.checkpoint.memory import MemorySaver
-    from langgraph.prebuilt import create_react_agent
 
     # Resolve workspace
     if workspace_path is None:
@@ -148,12 +148,12 @@ def build_agent(settings: Settings, workspace_path: Path | None = None):
     checkpointer = MemorySaver()
     logger.info("Using MemorySaver checkpointer (sync mode)")
 
-    # Create the ReAct agent
-    agent = create_react_agent(
+    # Create the agent
+    agent = create_agent(
         model=llm,
         tools=tools,
         checkpointer=checkpointer,
-        prompt=sys_prompt,
+        system_prompt=sys_prompt,
     )
 
     logger.info("BabiAgent built successfully with model: %s", settings.model_name)
@@ -176,8 +176,6 @@ async def build_agent_async(settings: Settings, workspace_path: Path | None = No
         - checkpointer: The actual checkpointer instance (for operations like clearing sessions)
         - agent: The compiled LangGraph agent
         """
-    from langgraph.prebuilt import create_react_agent
-
     # Resolve workspace
     if workspace_path is None:
         workspace_path = resolve_workspace(settings.workspace)
@@ -230,13 +228,13 @@ async def build_agent_async(settings: Settings, workspace_path: Path | None = No
 
 def _build_agent_with_checkpointer(llm, tools, sys_prompt, checkpointer):
     """Internal helper to create the agent with a given checkpointer."""
-    from langgraph.prebuilt import create_react_agent
+    from langchain.agents import create_agent
 
-    return create_react_agent(
+    return create_agent(
         model=llm,
         tools=tools,
         checkpointer=checkpointer,
-        prompt=sys_prompt,
+        system_prompt=sys_prompt,
     )
 
 
