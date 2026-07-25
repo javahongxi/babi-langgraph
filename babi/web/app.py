@@ -17,10 +17,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from babi.agent.builder import build_agent_async, get_workspace_path
+from babi.agent.builder import build_agent_async, build_agent_with_checkpointer, get_workspace_path
 from babi.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _prepare_agent_args(settings: Settings, workspace_path: Path):
+    """Prepare (llm, tools, sys_prompt) for agent construction."""
+    from babi.agent.builder import _get_llm, _get_all_tools
+    from babi.agent.prompt import build_system_prompt
+    from babi.tools.skill_tool import SkillTool
+
+    llm = _get_llm(settings)
+    skill_tool = SkillTool(workspace_path)
+    tools = _get_all_tools(skill_tool)
+    sys_prompt = build_system_prompt(list(skill_tool.skills.values()), workspace_path=workspace_path)
+    return llm, tools, sys_prompt
 
 # Language mapping for syntax highlighting
 _EXT_LANG = {
@@ -62,28 +75,30 @@ def create_app(settings: Settings) -> FastAPI:
         Configured FastAPI application
     """
     # Shared state for agent and checkpointer context manager
-    _state = {"agent": None, "checkpointer_cm": None, "checkpointer": None}
+    _state = {"agent": None, "checkpointer": None}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Startup: build agent with async checkpointer
         workspace_path = get_workspace_path(settings)
         checkpointer_cm, checkpointer, agent = await build_agent_async(settings, workspace_path)
-        _state["agent"] = agent
-        _state["checkpointer_cm"] = checkpointer_cm
-        _state["checkpointer"] = checkpointer
-        if checkpointer_cm:
-            logger.info("Session persistence enabled (PostgreSQL)")
+
+        if checkpointer_cm is not None:
+            # Use `async with` to manage PostgreSQL connection lifecycle
+            async with checkpointer_cm as checkpointer:
+                await checkpointer.setup()
+                llm, tools, sys_prompt = _prepare_agent_args(settings, workspace_path)
+                agent = build_agent_with_checkpointer(llm, tools, sys_prompt, checkpointer)
+                _state["agent"] = agent
+                _state["checkpointer"] = checkpointer
+                logger.info("Session persistence enabled (PostgreSQL)")
+                yield
+            logger.info("PostgreSQL connection closed")
         else:
+            _state["agent"] = agent
+            _state["checkpointer"] = checkpointer
             logger.info("Session persistence disabled (in-memory)")
-        yield
-        # Shutdown: exit the checkpointer context manager to close connections
-        if checkpointer_cm:
-            try:
-                await checkpointer_cm.__aexit__(None, None, None)
-                logger.info("PostgreSQL connection closed")
-            except Exception as e:
-                logger.warning("Error closing checkpointer: %s", e)
+            yield
 
     app = FastAPI(
         title="Babi Agent",
@@ -210,7 +225,7 @@ def create_app(settings: Settings) -> FastAPI:
             content = target.read_text(encoding="utf-8", errors="replace")
             lang = _EXT_LANG.get(target.suffix.lower(), "plaintext")
             return {"content": content, "language": lang, "size": target.stat().st_size}
-        except Exception as e:
+        except OSError as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/workspace/image")
@@ -240,14 +255,12 @@ def create_app(settings: Settings) -> FastAPI:
     async def clear_session(session_id: str = Query(default="default")):
         """Clear the conversation history for a session from the checkpointer."""
         checkpointer = _state.get("checkpointer")
-        checkpointer_cm = _state.get("checkpointer_cm")
         
-        if checkpointer_cm is None and checkpointer is None:
-            # Using MemorySaver, no persistent data to clear
+        if checkpointer is None:
             return {"status": "ok", "message": "会话已清空（内存模式）"}
         
         try:
-            target = checkpointer or checkpointer_cm
+            target = checkpointer
             # Try adelete_thread first (available in newer langgraph versions)
             if hasattr(target, 'adelete_thread'):
                 await target.adelete_thread(session_id)
@@ -271,7 +284,7 @@ def create_app(settings: Settings) -> FastAPI:
             else:
                 logger.warning("Unknown checkpointer type, cannot clear: %s", type(target))
                 return {"status": "ok", "message": "无法确定清空方式，但会话已标记清空"}
-        except Exception as e:
+        except (OSError, RuntimeError) as e:
             logger.warning("Failed to clear session: %s", e)
             return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 

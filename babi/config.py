@@ -3,6 +3,8 @@
 Type-safe Python configuration loaded from environment variables and .env files.
 """
 
+import os
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,8 +52,6 @@ class Settings(BaseSettings):
     @property
     def dashscope_api_key(self) -> str:
         """Resolve DashScope API key from environment."""
-        import os
-
         key = os.environ.get("DASHSCOPE_API_KEY", "")
         if not key:
             raise SystemExit(
@@ -67,13 +67,7 @@ class Settings(BaseSettings):
         return "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
-# Singleton settings instance
-_settings: Settings | None = None
-
-
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Get or create the global settings instance."""
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+    """Get the global settings instance (cached)."""
+    return Settings()

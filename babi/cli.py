@@ -15,6 +15,8 @@ import asyncio
 import logging
 import os
 
+from contextlib import asynccontextmanager
+
 import click
 
 from babi.config import get_settings
@@ -122,10 +124,46 @@ def _create_web_app(settings):
     return create_app(settings)
 
 
+@asynccontextmanager
+async def _agent_context(checkpointer_cm, checkpointer, agent, settings, workspace_path):
+    """Async context manager for checkpointer lifecycle.
+
+    If a checkpointer CM is provided, enters it and builds the agent.
+    Otherwise yields the pre-built agent directly.
+    """
+    from babi.agent.builder import (
+        _get_all_tools,
+        _get_llm,
+        build_agent_with_checkpointer,
+    )
+    from babi.agent.prompt import build_system_prompt
+    from babi.tools.skill_tool import SkillTool
+
+    if checkpointer_cm is not None:
+        async with checkpointer_cm as checkpointer:
+            await checkpointer.setup()
+            llm = _get_llm(settings)
+            skill_tool = SkillTool(workspace_path)
+            sys_prompt = build_system_prompt(list(skill_tool.skills.values()), workspace_path=workspace_path)
+            tools = _get_all_tools(skill_tool)
+            agent = build_agent_with_checkpointer(llm, tools, sys_prompt, checkpointer)
+            yield agent
+    else:
+        yield agent
+
+
 async def _cli_repl(settings) -> None:
     """Interactive CLI read-eval-print loop."""
 
-    from babi.agent.builder import build_agent_async, get_workspace_path
+    from babi.agent.builder import (
+        _get_all_tools,
+        _get_llm,
+        build_agent_async,
+        build_agent_with_checkpointer,
+        get_workspace_path,
+    )
+    from babi.agent.prompt import build_system_prompt
+    from babi.tools.skill_tool import SkillTool
 
     workspace_path = get_workspace_path(settings)
 
@@ -142,7 +180,7 @@ async def _cli_repl(settings) -> None:
     print()
 
     # Build agent with async checkpointer (PostgreSQL persistence if configured)
-    checkpointer_cm, _checkpointer, agent = await build_agent_async(settings, workspace_path)
+    checkpointer_cm, checkpointer, agent = await build_agent_async(settings, workspace_path)
 
     if checkpointer_cm:
         print("  ✓ Session persistence enabled (PostgreSQL)")
@@ -153,12 +191,15 @@ async def _cli_repl(settings) -> None:
     # Session config for checkpointer and recursion limit
     config = {
         "configurable": {"thread_id": "cli-session"},
-        "recursion_limit": settings.max_iters * 2,  # each iter = agent + tool node
+        "recursion_limit": settings.max_iters * 2,
     }
 
-    # REPL loop
-    loop = asyncio.get_event_loop()
-    try:
+    # Use `async with` to manage the checkpointer lifecycle
+    async with _agent_context(checkpointer_cm, checkpointer, agent, settings, workspace_path) as ctx_agent:
+        agent = ctx_agent
+
+        # REPL loop
+        loop = asyncio.get_running_loop()
         while True:
             try:
                 user_input = await loop.run_in_executor(None, lambda: input("You: "))
@@ -176,7 +217,6 @@ async def _cli_repl(settings) -> None:
             print("\nBabiAgent: ", end="", flush=True)
 
             try:
-                # Stream the response token by token
                 async for event in agent.astream_events(
                     {"messages": [("user", user_input)]},
                     config=config,
@@ -185,10 +225,8 @@ async def _cli_repl(settings) -> None:
                     kind = event.get("event")
 
                     if kind == "on_chat_model_stream":
-                        # Token-level streaming from the LLM
                         content = event.get("data", {}).get("chunk")
                         if content and hasattr(content, "content") and content.content:
-                            # Skip tool call chunks
                             if isinstance(content.content, str):
                                 print(content.content, end="", flush=True)
 
@@ -201,13 +239,6 @@ async def _cli_repl(settings) -> None:
             except Exception as e:
                 print(f"\nError: {e}\n")
                 logger.exception("Agent error")
-    finally:
-        # Clean up checkpointer connection by exiting the context manager
-        if checkpointer_cm:
-            try:
-                await checkpointer_cm.__aexit__(None, None, None)
-            except Exception as e:
-                logger.warning("Error closing checkpointer: %s", e)
 
 
 if __name__ == "__main__":

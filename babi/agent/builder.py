@@ -58,9 +58,9 @@ def _get_all_tools(skill_tool: SkillTool) -> list:
         skill_tool: SkillTool instance for skill-related tools
 
     Returns:
-        List of LangChain tool instances
+        List of LangChain BaseTool instances
     """
-    from langchain_core.tools import tool as tool_decorator
+    from langchain_core.tools import BaseTool, tool as tool_decorator
 
     # Wrap SkillTool methods as @tool functions
     @tool_decorator
@@ -117,7 +117,7 @@ def build_agent(settings: Settings, workspace_path: Path | None = None):
     Returns:
         Compiled LangGraph agent (CompiledGraph) ready for use
     """
-    from langchain.agents import create_agent
+    from langchain.agents.factory import create_agent
     from langgraph.checkpoint.memory import MemorySaver
 
     # Resolve workspace
@@ -163,8 +163,8 @@ def build_agent(settings: Settings, workspace_path: Path | None = None):
 async def build_agent_async(settings: Settings, workspace_path: Path | None = None):
     """Build and configure the BabiAgent with async PostgreSQL persistence.
 
-    This is the recommended way to build the agent when PostgreSQL is configured.
-    Uses AsyncPostgresSaver for session persistence across restarts.
+    The caller is responsible for managing the checkpointer lifecycle
+    using ``async with`` on the returned context manager (if any).
 
     Args:
         settings: Application settings
@@ -172,10 +172,11 @@ async def build_agent_async(settings: Settings, workspace_path: Path | None = No
 
     Returns:
         Tuple of (checkpointer_cm_or_none, checkpointer, agent)
-        - checkpointer_cm_or_none: The async context manager (for lifecycle management) or None if using MemorySaver
-        - checkpointer: The actual checkpointer instance (for operations like clearing sessions)
-        - agent: The compiled LangGraph agent
-        """
+        - checkpointer_cm_or_none: Async context manager, or None for MemorySaver
+        - checkpointer: The actual checkpointer instance (None if CM returned for caller to enter)
+        - agent: The compiled agent (None if CM returned for caller to build)
+    """
+    from langchain.agents.factory import create_agent
     # Resolve workspace
     if workspace_path is None:
         workspace_path = resolve_workspace(settings.workspace)
@@ -206,16 +207,11 @@ async def build_agent_async(settings: Settings, workspace_path: Path | None = No
         try:
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-            # Create the context manager - caller must enter and exit it
             checkpointer_cm = AsyncPostgresSaver.from_conn_string(pg_dsn)
-            # Return the CM itself, caller will enter it
-            logger.info("Using AsyncPostgresSaver checkpointer - sessions will persist!")
-            # We need to enter the context manager here and return both the CM and the entered checkpointer
-            checkpointer = await checkpointer_cm.__aenter__()
-            await checkpointer.setup()
-            agent = _build_agent_with_checkpointer(llm, tools, sys_prompt, checkpointer)
-            return checkpointer_cm, checkpointer, agent
-        except Exception as e:
+            logger.info("Using AsyncPostgresSaver - caller should `async with` the CM, "
+                        "then call build_agent_with_checkpointer()")
+            return checkpointer_cm, None, None
+        except (OSError, RuntimeError) as e:
             logger.warning("Failed to create AsyncPostgresSaver, falling back to MemorySaver: %s", e)
 
     # Fallback to in-memory
@@ -223,12 +219,15 @@ async def build_agent_async(settings: Settings, workspace_path: Path | None = No
 
     checkpointer = MemorySaver()
     logger.info("Using MemorySaver checkpointer (in-memory)")
-    return None, checkpointer, _build_agent_with_checkpointer(llm, tools, sys_prompt, checkpointer)
+    agent = create_agent(
+        model=llm, tools=tools, checkpointer=checkpointer, system_prompt=sys_prompt,
+    )
+    return None, checkpointer, agent
 
 
-def _build_agent_with_checkpointer(llm, tools, sys_prompt, checkpointer):
-    """Internal helper to create the agent with a given checkpointer."""
-    from langchain.agents import create_agent
+def build_agent_with_checkpointer(llm, tools, sys_prompt, checkpointer):
+    """Create the agent with a given checkpointer."""
+    from langchain.agents.factory import create_agent
 
     return create_agent(
         model=llm,
