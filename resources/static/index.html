@@ -137,9 +137,17 @@
         const sendBtn = document.getElementById('send-btn');
         const sessionIdInput = document.getElementById('session-id');
         let isSending = false;
+        let activeSessionId = sessionIdInput.value.trim() || 'default';
 
         if (typeof marked !== 'undefined') marked.setOptions({ breaks: true });
 
+        userInput.addEventListener('focus', function() {
+            const currentSessionId = sessionIdInput.value.trim() || 'default';
+            if (currentSessionId !== activeSessionId) {
+                chatInner.innerHTML = '';
+                activeSessionId = currentSessionId;
+            }
+        });
         userInput.addEventListener('input', function() {
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 120) + 'px';
@@ -222,6 +230,7 @@
             };
 
             const sessionId = sessionIdInput.value.trim() || 'default';
+            activeSessionId = sessionId;
             try {
                 const response = await fetch('/api/chat', {
                     method: 'POST',
