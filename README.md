@@ -1,6 +1,6 @@
 # Babi Agent ♻️
 
-面向开发者的 AI Coding Agent，基于 LangGraph ReAct 模式提供代码分析、构建、调试等开发辅助能力。
+面向开发者的 AI Coding Agent，基于 ReAct 模式提供代码分析、构建、调试等开发辅助能力。
 
 > 技术栈：LangGraph + LangChain + FastAPI + Click
 
