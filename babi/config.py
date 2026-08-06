@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     workspace: str = "~/babi-langgraph-workspace"
 
     # --- Model ---
-    model_name: str = "qwen3.8-max"
+    model_name: str = "qwen3.7-plus"
 
     # --- Agent ---
     max_iters: int = 20
